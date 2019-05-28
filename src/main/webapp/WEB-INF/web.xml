@@ -3,15 +3,27 @@
          xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee
                              http://xmlns.jcp.org/xml/ns/javaee/web-app_3_1.xsd" version="3.1">
 
-  <servlet>
-    <servlet-name>PredictNowCountTotalCount</servlet-name>
-    <servlet-class>cn.iscas.PredictNowCountTotalCount</servlet-class>
-  </servlet>
+    <servlet>
+        <servlet-name>PredictNowCountTotalCount</servlet-name>
+        <servlet-class>cn.iscas.PredictNowCountTotalCount</servlet-class>
+        <init-param>
+            <param-name>db.url</param-name>
+            <param-value>jdbc:mysql://localhost:3306/wh_expo</param-value>
+        </init-param>
+        <init-param>
+            <param-name>db.username</param-name>
+            <param-value>root</param-value>
+        </init-param>
+        <init-param>
+            <param-name>db.password</param-name>
+            <param-value>root</param-value>
+        </init-param>
+    </servlet>
 
-  <servlet-mapping>
-    <servlet-name>PredictNowCountTotalCount</servlet-name>
-    <url-pattern>/predict</url-pattern>
-  </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>PredictNowCountTotalCount</servlet-name>
+        <url-pattern>/predict</url-pattern>
+    </servlet-mapping>
 
 
 </web-app>
