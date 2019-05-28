@@ -1,9 +1,17 @@
 package cn.iscas;
 
+import org.apache.commons.dbutils.DbUtils;
+import org.apache.commons.dbutils.QueryRunner;
+import org.apache.commons.dbutils.ResultSetHandler;
+import org.apache.commons.dbutils.handlers.ArrayListHandler;
+import org.apache.commons.dbutils.handlers.ColumnListHandler;
+import org.apache.commons.dbutils.handlers.ScalarHandler;
+import org.apache.commons.dbutils.handlers.columns.StringColumnHandler;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.joda.time.LocalTime;
 
+import javax.management.Query;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
 import javax.servlet.ServletOutputStream;
@@ -11,9 +19,7 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.*;
 
 public class PredictNowCountTotalCount extends HttpServlet {
@@ -53,6 +59,8 @@ public class PredictNowCountTotalCount extends HttpServlet {
         log.debug("plus 5 minutes: " + time.toString());
 
         ArrayList<String> timeStrs = getTimeList(9, 0, 20, 0, 5);
+
+        ArrayList<String> allDates = getAllDateList();
 
         try (Connection connection = DriverManager.getConnection(url, username, password)) {
             out.println("Database connected!");
@@ -107,4 +115,45 @@ public class PredictNowCountTotalCount extends HttpServlet {
         return timeStrs;
     }
 
+    private ArrayList<String> getAllDateList() {
+        ArrayList<String> ans = new ArrayList<>();
+        final String sql = "select distinct day from expo_flow_status order by day;";
+        QueryRunner run = new QueryRunner();
+        ResultSetHandler<List<String>> h = new ColumnListHandler<String>("day");
+        try (Connection conn = getJdbcConnection()) {
+            ans = new ArrayList<>(run.query(conn, sql, h));
+        } catch (SQLException e) {
+            log.error("Database error! message: " + e.getMessage());
+            e.printStackTrace();
+        }
+        log.debug("All dates from database: " + String.join(",", ans));
+        return ans;
+    }
+
+    private Connection getJdbcConnection() throws SQLException {
+        return DriverManager.getConnection(getJdbcUrl(), getUserName(), getPassword());
+    }
+
+    private String getJdbcUrl() {
+        return getServletParam("db.url");
+    }
+
+    private String getUserName() {
+        return getServletParam("db.username");
+    }
+
+    private String getPassword() {
+        return getServletParam("db.username");
+    }
+
+    private String getServletParam(String paramName) {
+        ServletConfig config = getServletConfig();
+        ArrayList<String> paramNames = Collections.list(config.getInitParameterNames());
+        if (!paramNames.contains(paramName)) {
+            log.error("configuration " + paramName + " not found in web.xml!");
+        }
+        String paramValue = getInitParameter(paramName);
+        log.debug("load configuration, name=" + paramName + ", value=" + paramValue);
+        return paramValue;
+    }
 }
