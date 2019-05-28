@@ -1,17 +1,13 @@
 package cn.iscas;
 
-import org.apache.commons.dbutils.DbUtils;
 import org.apache.commons.dbutils.QueryRunner;
 import org.apache.commons.dbutils.ResultSetHandler;
-import org.apache.commons.dbutils.handlers.ArrayListHandler;
 import org.apache.commons.dbutils.handlers.ColumnListHandler;
-import org.apache.commons.dbutils.handlers.ScalarHandler;
-import org.apache.commons.dbutils.handlers.columns.StringColumnHandler;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.joda.time.LocalDate;
 import org.joda.time.LocalTime;
 
-import javax.management.Query;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
 import javax.servlet.ServletOutputStream;
@@ -19,8 +15,14 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.sql.*;
-import java.util.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class PredictNowCountTotalCount extends HttpServlet {
     private static Log log = LogFactory.getLog(PredictNowCountTotalCount.class);
@@ -61,6 +63,9 @@ public class PredictNowCountTotalCount extends HttpServlet {
         ArrayList<String> timeStrs = getTimeList(9, 0, 20, 0, 5);
 
         ArrayList<String> allDates = getAllDateList();
+
+        ArrayList<String> workdays = getWorkdays(allDates);
+        ArrayList<String> holidays = getHolidays(allDates, workdays);
 
         try (Connection connection = DriverManager.getConnection(url, username, password)) {
             out.println("Database connected!");
@@ -128,6 +133,37 @@ public class PredictNowCountTotalCount extends HttpServlet {
         }
         log.debug("All dates from database: " + String.join(",", ans));
         return ans;
+    }
+
+    private ArrayList<String> getWorkdays(ArrayList<String> allDateList) {
+        List<LocalDate> dates = allDateList.stream().map(s -> LocalDate.parse(s)).collect(Collectors.toList());
+        log.debug(dates.size() + " dates found and parsed");
+
+        // In joda time, week day is similar to our custom 1 represents monday, 2 for tuesday and so on..
+        dates.removeIf(d -> d.getDayOfWeek() == 6 || d.getDayOfWeek() == 7);
+        log.debug("after remove saturday and sunday," + dates.size() + " dates retained");
+
+        List<LocalDate> extraHolidays = getExtraHolidays().stream()
+                .map(s -> LocalDate.parse(s)).collect(Collectors.toList());
+        dates.removeAll(extraHolidays);
+        log.debug("after remove" + extraHolidays.size() + " extra holidays, " + dates.size() + " dates retained");
+
+        List<LocalDate> extraWorkdays = getExtraWorkDays().stream()
+                .map((s -> LocalDate.parse(s))).collect(Collectors.toList());
+        dates.addAll(extraWorkdays);
+        log.debug("after add " + extraWorkdays.size() + " extra workdays, " + dates.size() + " dates retained");
+
+        dates.sort(LocalDate::compareTo);
+
+        ArrayList<String> ans = new ArrayList<>(dates.stream().map(d -> d.toString("yyyy-MM-dd")).collect(Collectors.toList()));
+        log.debug(dates.size() + " Workdays found:" + String.join(",", ans));
+        return ans;
+    }
+
+    private ArrayList<String> getHolidays(ArrayList<String> allDateList, ArrayList<String> workdays) {
+        allDateList.removeAll(workdays);
+        log.debug(allDateList.size() + " Holidays found: " + String.join(",", allDateList));
+        return allDateList;
     }
 
     private Connection getJdbcConnection() throws SQLException {
