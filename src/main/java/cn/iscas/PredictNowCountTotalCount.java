@@ -2,6 +2,7 @@ package cn.iscas;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.joda.time.LocalTime;
 
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
@@ -45,6 +46,14 @@ public class PredictNowCountTotalCount extends HttpServlet {
             out.println(s);
         }
 
+        LocalTime time = new LocalTime(9, 0, 0);
+        log.debug("start time: " + time.toString());
+
+        time = time.plusMinutes(5);
+        log.debug("plus 5 minutes: " + time.toString());
+
+        ArrayList<String> timeStrs = getTimeList(9, 0, 20, 0, 5);
+
         try (Connection connection = DriverManager.getConnection(url, username, password)) {
             out.println("Database connected!");
             out.flush();
@@ -85,4 +94,17 @@ public class PredictNowCountTotalCount extends HttpServlet {
         log.debug("load " + EXTRA_WORKDAYS + ":" + String.join(",", extraWorkdays));
         return extraWorkdays;
     }
+
+    private ArrayList<String> getTimeList(int startHour, int startMinute, int endHour, int endMinute, int minuteSpan) {
+        LocalTime startTime = new LocalTime(startHour, startMinute, 0);
+        LocalTime endTime = new LocalTime(endHour, endMinute, 0);
+        ArrayList<String> timeStrs = new ArrayList<>();
+        while (startTime.getMillisOfDay() <= endTime.getMillisOfDay()) {
+            timeStrs.add(startTime.toString("HH:mm"));
+            startTime = startTime.plusMinutes(minuteSpan);
+        }
+        log.debug("time strs:" + String.join(",", timeStrs));
+        return timeStrs;
+    }
+
 }
