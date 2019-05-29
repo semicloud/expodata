@@ -1,5 +1,6 @@
 package cn.iscas;
 
+import com.google.common.math.Stats;
 import org.apache.commons.dbutils.QueryRunner;
 import org.apache.commons.dbutils.ResultSetHandler;
 import org.apache.commons.dbutils.handlers.ColumnListHandler;
@@ -41,8 +42,8 @@ public class PredictNowCountTotalCount extends HttpServlet {
         System.out.println(password);
         System.out.println("Connecting database...");
 
-        ArrayList<String> extraHolidays = getExtraHolidays();
-        ArrayList<String> extraWorkdays = getExtraWorkDays();
+        ArrayList<String> extraHolidays = getExtraDays(EXTRA_HOLIDAYS);
+        ArrayList<String> extraWorkdays = getExtraDays(EXTRA_WORKDAYS);
 
         out.println("Extra Workdays:");
         for (String s : extraWorkdays) {
@@ -62,10 +63,23 @@ public class PredictNowCountTotalCount extends HttpServlet {
 
         ArrayList<String> timeStrs = getTimeList(9, 0, 20, 0, 5);
 
+
         ArrayList<String> allDates = getAllDateList();
 
         ArrayList<String> workdays = getWorkdays(allDates);
         ArrayList<String> holidays = getHolidays(allDates, workdays);
+
+        out.println("Hour:" + getHour(time.toString("HH:mm")));
+        out.println("Minute:" + getMinute(time.toString("HH:mm")));
+
+        ArrayList<Double> nums = getCountByDays("09:00", workdays, "nowCount");
+        out.println("Average nowCount of 09:00 at workdays: " + Math.rint(Stats.meanOf(nums)));
+        ArrayList<Double> nums2 = getCountByDays("09:00", holidays, "nowCount");
+        out.println("Average nowCount of 09:00 at holidays: " + Math.rint(Stats.meanOf(nums2)));
+
+        ArrayList<String> timePoints = getTimeList(9, 0, 9, 55, 5);
+
+        double value = estimate("2019-05-22", "09:00", "totalCount");
 
         try (Connection connection = DriverManager.getConnection(url, username, password)) {
             out.println("Database connected!");
@@ -80,32 +94,18 @@ public class PredictNowCountTotalCount extends HttpServlet {
         super.doPost(req, resp);
     }
 
-    private ArrayList<String> getExtraHolidays() {
+    private ArrayList<String> getExtraDays(String attrName) {
         ServletConfig config = getServletConfig();
         ArrayList<String> names = Collections.list(config.getInitParameterNames());
-        ArrayList<String> extraHolidays = new ArrayList<>();
-        if (names.contains(EXTRA_HOLIDAYS)) {
-            String str = getInitParameter(EXTRA_HOLIDAYS);
-            extraHolidays = new ArrayList<>(Arrays.asList(str.split(",")));
+        ArrayList<String> days = new ArrayList<>();
+        if (names.contains(attrName)) {
+            String str = getInitParameter(attrName);
+            days = new ArrayList<>(Arrays.asList(str.split(",")));
         } else {
-            log.error(EXTRA_HOLIDAYS + " not found in web.xml!");
+            log.error(attrName + " not found in web.xml!");
         }
-        log.debug("load " + EXTRA_HOLIDAYS + ":" + String.join(",", extraHolidays));
-        return extraHolidays;
-    }
-
-    private ArrayList<String> getExtraWorkDays() {
-        ServletConfig config = getServletConfig();
-        ArrayList<String> names = Collections.list(config.getInitParameterNames());
-        ArrayList<String> extraWorkdays = new ArrayList<>();
-        if (names.contains(EXTRA_WORKDAYS)) {
-            String str = getInitParameter(EXTRA_WORKDAYS);
-            extraWorkdays = new ArrayList<>(Arrays.asList(str.split(",")));
-        } else {
-            log.error(EXTRA_WORKDAYS + " not found in web.xml!");
-        }
-        log.debug("load " + EXTRA_WORKDAYS + ":" + String.join(",", extraWorkdays));
-        return extraWorkdays;
+        log.debug("load " + attrName + ":" + String.join(",", days));
+        return days;
     }
 
     private ArrayList<String> getTimeList(int startHour, int startMinute, int endHour, int endMinute, int minuteSpan) {
@@ -143,12 +143,12 @@ public class PredictNowCountTotalCount extends HttpServlet {
         dates.removeIf(d -> d.getDayOfWeek() == 6 || d.getDayOfWeek() == 7);
         log.debug("after remove saturday and sunday," + dates.size() + " dates retained");
 
-        List<LocalDate> extraHolidays = getExtraHolidays().stream()
+        List<LocalDate> extraHolidays = getExtraDays(EXTRA_HOLIDAYS).stream()
                 .map(s -> LocalDate.parse(s)).collect(Collectors.toList());
         dates.removeAll(extraHolidays);
         log.debug("after remove" + extraHolidays.size() + " extra holidays, " + dates.size() + " dates retained");
 
-        List<LocalDate> extraWorkdays = getExtraWorkDays().stream()
+        List<LocalDate> extraWorkdays = getExtraDays(EXTRA_WORKDAYS).stream()
                 .map((s -> LocalDate.parse(s))).collect(Collectors.toList());
         dates.addAll(extraWorkdays);
         log.debug("after add " + extraWorkdays.size() + " extra workdays, " + dates.size() + " dates retained");
@@ -167,6 +167,11 @@ public class PredictNowCountTotalCount extends HttpServlet {
     }
 
     private Connection getJdbcConnection() throws SQLException {
+        try {
+            Class.forName("com.mysql.jdbc.Driver");
+        } catch (ClassNotFoundException e) {
+            log.error("Database driver not found!");
+        }
         return DriverManager.getConnection(getJdbcUrl(), getUserName(), getPassword());
     }
 
@@ -192,4 +197,107 @@ public class PredictNowCountTotalCount extends HttpServlet {
         log.debug("load configuration, name=" + paramName + ", value=" + paramValue);
         return paramValue;
     }
+
+    private String getHour(String time) {
+        return time.split(":")[0];
+    }
+
+    private String getMinute(String time) {
+        return time.split(":")[1];
+    }
+
+    boolean isWorkday(LocalDate date) {
+        String dateStr = date.toString("yyyy-MM-dd");
+        if (getExtraDays(EXTRA_HOLIDAYS).contains(dateStr))
+            return false;
+        if (getExtraDays(EXTRA_WORKDAYS).contains(dateStr))
+            return true;
+        if (date.getDayOfWeek() != 6 && date.getDayOfWeek() != 7)
+            return true;
+        return false;
+    }
+
+    ArrayList<Double> getCountByDays(String timeStr, List<String> days, String column) {
+        ArrayList<Double> ans = new ArrayList<>();
+        StringBuilder sb = new StringBuilder("select id,day,time," + column + " from expo_flow_status where day in ('");
+        for (String day : days) {
+            if (days.indexOf(day) == days.size() - 1)
+                sb.append(day + "')");
+            else
+                sb.append(day + "','");
+        }
+        sb.append(" and time='" + timeStr + "' order by day,time");
+        log.debug("sql:" + sb.toString());
+        ResultSetHandler<List<Double>> h = new ColumnListHandler<>(column);
+        try (Connection conn = getJdbcConnection()) {
+            QueryRunner runner = new QueryRunner();
+            ans = new ArrayList<Double>(runner.query(conn, sb.toString(), h));
+        } catch (SQLException e) {
+            log.error("Database error! message: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return ans;
+    }
+
+    private double estimate(String dateStr, String timeStr, String column) {
+        LocalDate date = LocalDate.parse(dateStr);
+        log.debug("parsed date:" + date.toString());
+        double ans = 0.0;
+        int hour = Integer.parseInt(getHour(timeStr));
+        ArrayList<String> allDateList = getAllDateList();
+        ArrayList<String> workDays = getWorkdays(allDateList);
+        ArrayList<String> holidays = getHolidays(allDateList, workDays);
+        if (isWorkday(date)) {
+            log.debug(date + " is a workday..");
+            workDays.remove(dateStr);
+            ArrayList<Double> nums = getCountByDays(timeStr, workDays, column);
+            nums.removeAll(Collections.singleton(0.0d)); // Remove zeros
+            Double timeHistMean = Stats.meanOf(nums);
+            log.debug("In work day history, the average of [" + column + "] at [" + timeStr + "] is " + timeHistMean);
+
+            List<String> lastHourTimeStrList = getTimeList(hour - 1, 0, hour - 1, 55, 5);
+
+            ArrayList<String> workdaysToday = new ArrayList<>();
+            workdaysToday.add(dateStr);
+
+            ArrayList<Double> numsHistory = new ArrayList<>();
+            ArrayList<Double> numsToday = new ArrayList<>();
+            for (String lastHourTimeStr : lastHourTimeStrList) {
+                numsHistory.addAll(getCountByDays(lastHourTimeStr, workDays, column));
+                numsToday.addAll(getCountByDays(lastHourTimeStr, workdaysToday, column));
+            }
+
+            numsHistory.removeAll(Collections.singleton(0.0d));
+            numsToday.removeAll(Collections.singleton(0.0d));
+
+            if (numsHistory.isEmpty()) {
+                log.error("Data unavailable!");
+                return 0.0d;
+            }
+
+            if (numsToday.isEmpty()) {
+                log.error("Data unavailable!");
+                return 0.0d;
+            }
+
+            double numsHistoryMean = Math.rint(Stats.meanOf(numsHistory));
+            double numsTodayMean = Math.rint(Stats.meanOf(numsToday));
+
+            log.debug("At " + timeStr + ", historical " + column + " average is " +
+                    numsHistoryMean + ", today average is " + numsTodayMean);
+
+            double ratio = numsTodayMean / numsHistoryMean;
+            log.debug("ratio:" + ratio);
+
+            if (ratio >= 1)
+                ans = timeHistMean + timeHistMean * Math.abs(1 - ratio);
+            else
+                ans = timeHistMean - timeHistMean * Math.abs(1 - ratio);
+            ans = Math.rint(ans);
+            log.debug("Estimate " + column + " at " + timeStr + ": " + ans);
+        }
+
+        return ans;
+    }
+
 }
