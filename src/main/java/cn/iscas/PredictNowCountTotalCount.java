@@ -8,6 +8,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.joda.time.LocalDate;
 import org.joda.time.LocalTime;
+import org.json.JSONObject;
 
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
@@ -32,62 +33,43 @@ public class PredictNowCountTotalCount extends HttpServlet {
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+        resp.setHeader("content-type", "text/json,charset=UTF-8");
+        ArrayList<String> parameterNames = Collections.list(req.getParameterNames());
         ServletOutputStream out = resp.getOutputStream();
-        ServletConfig config = getServletConfig();
-        String url = config.getInitParameter("db.url");
-        System.out.println(url);
-        String username = config.getInitParameter("db.username");
-        System.out.println(username);
-        String password = config.getInitParameter("db.password");
-        System.out.println(password);
-        System.out.println("Connecting database...");
-
-        ArrayList<String> extraHolidays = getExtraDays(EXTRA_HOLIDAYS);
-        ArrayList<String> extraWorkdays = getExtraDays(EXTRA_WORKDAYS);
-
-        out.println("Extra Workdays:");
-        for (String s : extraWorkdays) {
-            out.println(s);
-        }
-
-        out.println("Extra Holidays:");
-        for (String s : extraHolidays) {
-            out.println(s);
-        }
-
-        LocalTime time = new LocalTime(9, 0, 0);
-        log.debug("start time: " + time.toString());
-
-        time = time.plusMinutes(5);
-        log.debug("plus 5 minutes: " + time.toString());
-
-        ArrayList<String> timeStrs = getTimeList(9, 0, 20, 0, 5);
-
-
-        ArrayList<String> allDates = getAllDateList();
-
-        ArrayList<String> workdays = getWorkdays(allDates);
-        ArrayList<String> holidays = getHolidays(allDates, workdays);
-
-        out.println("Hour:" + getHour(time.toString("HH:mm")));
-        out.println("Minute:" + getMinute(time.toString("HH:mm")));
-
-        ArrayList<Double> nums = getCountByDays(Arrays.asList("09:00"), workdays, "nowCount");
-        out.println("Average nowCount of 09:00 at workdays: " + Math.rint(Stats.meanOf(nums)));
-        ArrayList<Double> nums2 = getCountByDays(Arrays.asList("09:00"), holidays, "nowCount");
-        out.println("Average nowCount of 09:00 at holidays: " + Math.rint(Stats.meanOf(nums2)));
-
-        ArrayList<String> timePoints = getTimeList(9, 0, 9, 55, 5);
-
-        double value = estimate("2019-05-22", "09:00", workdays, "totalCount");
-        double value2 = estimate("2019-05-18", "09:00", holidays, "totalCount");
-
-        try (Connection connection = DriverManager.getConnection(url, username, password)) {
-            out.println("Database connected!");
+        if (!parameterNames.contains("date") || !parameterNames.contains("time")) {
+            JSONObject jsonObject = new JSONObject();
+            jsonObject.put("nowCount", "NaN");
+            jsonObject.put("totalCount", "NaN");
+            jsonObject.put("errorMessage", "parameter [date] or [time] not found!");
+            out.println(jsonObject.toString());
             out.flush();
-        } catch (SQLException e) {
-            throw new IllegalStateException("Cannot connect the database!", e);
+            out.close();
+            return;
         }
+        String date = req.getParameter("date");
+        String time = req.getParameter("time");
+        log.debug("input parameter: date=" + date + ", time=" + time);
+        double estimatedTotalCount = 0;
+        double estimatedNowCount = 0;
+        ArrayList<String> allDateList = getAllDateList();
+        ArrayList<String> workdays = getWorkdays(allDateList);
+        ArrayList<String> holidays = getHolidays(allDateList, workdays);
+        if (isWorkday(LocalDate.parse(date))) {
+            estimatedNowCount = estimate(date, time, workdays, "nowCount");
+            estimatedTotalCount = estimate(date, time, workdays, "totalCount");
+        } else {
+            estimatedNowCount = estimate(date, time, holidays, "nowCount");
+            estimatedTotalCount = estimate(date, time, holidays, "totalCount");
+        }
+
+        JSONObject jsonObject = new JSONObject();
+        jsonObject.put("nowCount", estimatedNowCount);
+        jsonObject.put("totalCount", estimatedTotalCount);
+        jsonObject.put("errorMessage", "");
+        out.println(jsonObject.toString());
+        out.flush();
+        out.close();
+        return;
     }
 
     @Override
