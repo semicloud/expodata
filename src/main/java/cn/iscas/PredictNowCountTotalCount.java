@@ -72,14 +72,15 @@ public class PredictNowCountTotalCount extends HttpServlet {
         out.println("Hour:" + getHour(time.toString("HH:mm")));
         out.println("Minute:" + getMinute(time.toString("HH:mm")));
 
-        ArrayList<Double> nums = getCountByDays("09:00", workdays, "nowCount");
+        ArrayList<Double> nums = getCountByDays(Arrays.asList("09:00"), workdays, "nowCount");
         out.println("Average nowCount of 09:00 at workdays: " + Math.rint(Stats.meanOf(nums)));
-        ArrayList<Double> nums2 = getCountByDays("09:00", holidays, "nowCount");
+        ArrayList<Double> nums2 = getCountByDays(Arrays.asList("09:00"), holidays, "nowCount");
         out.println("Average nowCount of 09:00 at holidays: " + Math.rint(Stats.meanOf(nums2)));
 
         ArrayList<String> timePoints = getTimeList(9, 0, 9, 55, 5);
 
-        double value = estimate("2019-05-22", "09:00", "totalCount");
+        double value = estimate("2019-05-22", "09:00", workdays, "totalCount");
+        double value2 = estimate("2019-05-18", "09:00", holidays, "totalCount");
 
         try (Connection connection = DriverManager.getConnection(url, username, password)) {
             out.println("Database connected!");
@@ -217,7 +218,7 @@ public class PredictNowCountTotalCount extends HttpServlet {
         return false;
     }
 
-    ArrayList<Double> getCountByDays(String timeStr, List<String> days, String column) {
+    ArrayList<Double> getCountByDays(List<String> times, List<String> days, String column) {
         ArrayList<Double> ans = new ArrayList<>();
         StringBuilder sb = new StringBuilder("select id,day,time," + column + " from expo_flow_status where day in ('");
         for (String day : days) {
@@ -226,7 +227,14 @@ public class PredictNowCountTotalCount extends HttpServlet {
             else
                 sb.append(day + "','");
         }
-        sb.append(" and time='" + timeStr + "' order by day,time");
+        sb.append(" and time in ('");
+        for (String time : times) {
+            if (times.indexOf(time) == times.size() - 1)
+                sb.append(time + "')");
+            else
+                sb.append(time + "','");
+        }
+        sb.append("order by day,time");
         log.debug("sql:" + sb.toString());
         ResultSetHandler<List<Double>> h = new ColumnListHandler<>(column);
         try (Connection conn = getJdbcConnection()) {
@@ -239,65 +247,51 @@ public class PredictNowCountTotalCount extends HttpServlet {
         return ans;
     }
 
-    private double estimate(String dateStr, String timeStr, String column) {
+    private double estimate(String dateStr, String timeStr, List<String> days, String column) {
         LocalDate date = LocalDate.parse(dateStr);
         log.debug("parsed date:" + date.toString());
         double ans = 0.0;
         int hour = Integer.parseInt(getHour(timeStr));
-        ArrayList<String> allDateList = getAllDateList();
-        ArrayList<String> workDays = getWorkdays(allDateList);
-        ArrayList<String> holidays = getHolidays(allDateList, workDays);
-        if (isWorkday(date)) {
-            log.debug(date + " is a workday..");
-            workDays.remove(dateStr);
-            ArrayList<Double> nums = getCountByDays(timeStr, workDays, column);
-            nums.removeAll(Collections.singleton(0.0d)); // Remove zeros
-            Double timeHistMean = Stats.meanOf(nums);
-            log.debug("In work day history, the average of [" + column + "] at [" + timeStr + "] is " + timeHistMean);
+        log.debug(date + " is a workday..");
+        days.remove(dateStr);
+        ArrayList<Double> nums = getCountByDays(Arrays.asList(timeStr), days, column);
+        nums.removeAll(Collections.singleton(0.0d)); // Remove zeros
+        Double timeHistMean = Stats.meanOf(nums);
+        log.debug("In work day history, the average of [" + column + "] at [" + timeStr + "] is " + timeHistMean);
 
-            List<String> lastHourTimeStrList = getTimeList(hour - 1, 0, hour - 1, 55, 5);
+        List<String> lastHourTimeStrList = getTimeList(hour - 1, 0, hour - 1, 55, 5);
 
-            ArrayList<String> workdaysToday = new ArrayList<>();
-            workdaysToday.add(dateStr);
+        ArrayList<Double> numsHistory = getCountByDays(lastHourTimeStrList, days, column);
+        ArrayList<Double> numsToday = getCountByDays(lastHourTimeStrList, Arrays.asList(dateStr), column);
+        numsHistory.removeAll(Collections.singleton(0.0d));
+        numsToday.removeAll(Collections.singleton(0.0d));
 
-            ArrayList<Double> numsHistory = new ArrayList<>();
-            ArrayList<Double> numsToday = new ArrayList<>();
-            for (String lastHourTimeStr : lastHourTimeStrList) {
-                numsHistory.addAll(getCountByDays(lastHourTimeStr, workDays, column));
-                numsToday.addAll(getCountByDays(lastHourTimeStr, workdaysToday, column));
-            }
-
-            numsHistory.removeAll(Collections.singleton(0.0d));
-            numsToday.removeAll(Collections.singleton(0.0d));
-
-            if (numsHistory.isEmpty()) {
-                log.error("Data unavailable!");
-                return 0.0d;
-            }
-
-            if (numsToday.isEmpty()) {
-                log.error("Data unavailable!");
-                return 0.0d;
-            }
-
-            double numsHistoryMean = Math.rint(Stats.meanOf(numsHistory));
-            double numsTodayMean = Math.rint(Stats.meanOf(numsToday));
-
-            log.debug("At " + timeStr + ", historical " + column + " average is " +
-                    numsHistoryMean + ", today average is " + numsTodayMean);
-
-            double ratio = numsTodayMean / numsHistoryMean;
-            log.debug("ratio:" + ratio);
-
-            if (ratio >= 1)
-                ans = timeHistMean + timeHistMean * Math.abs(1 - ratio);
-            else
-                ans = timeHistMean - timeHistMean * Math.abs(1 - ratio);
-            ans = Math.rint(ans);
-            log.debug("Estimate " + column + " at " + timeStr + ": " + ans);
+        if (numsHistory.isEmpty()) {
+            log.error("Data unavailable!");
+            return 0.0d;
         }
+
+        if (numsToday.isEmpty()) {
+            log.error("Data unavailable!");
+            return 0.0d;
+        }
+
+        double numsHistoryMean = Math.rint(Stats.meanOf(numsHistory));
+        double numsTodayMean = Math.rint(Stats.meanOf(numsToday));
+
+        log.debug("At " + timeStr + ", historical " + column + " average is " +
+                numsHistoryMean + ", today average is " + numsTodayMean);
+
+        double ratio = numsTodayMean / numsHistoryMean;
+        log.debug("ratio:" + ratio);
+
+        if (ratio >= 1)
+            ans = timeHistMean + timeHistMean * Math.abs(1 - ratio);
+        else
+            ans = timeHistMean - timeHistMean * Math.abs(1 - ratio);
+        ans = Math.rint(ans);
+        log.debug("Estimate " + column + " at " + timeStr + ": " + ans);
 
         return ans;
     }
-
 }
